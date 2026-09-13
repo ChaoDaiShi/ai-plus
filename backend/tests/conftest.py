@@ -1,5 +1,11 @@
 """pytest 共享 fixture：FastAPI TestClient + fixtures 目录路径。"""
 
+import os
+
+# TestClient 每个请求运行在独立事件循环；test 模式下全局 engine 使用
+# NullPool，连接随请求生灭，不跨循环复用（须在导入 app 之前设置）。
+os.environ.setdefault("APP_ENV", "test")
+
 from pathlib import Path
 
 import pytest

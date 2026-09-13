@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     # 值必须为 UUID 字符串；生产模式禁用预置身份（见 app.api.deps）。
     preset_tenant_id: str = str(TENANT_PRESET_ID)
     preset_project_id: str = str(PROJECT_PRESET_ID)
+    # P0 数据来源：demo（内置演示数据集）或 http（真实 Amazon 采集 API）。
+    # http 模式缺少凭证在节点执行时 fail-fast，禁止自动回退 demo。
+    amazon_provider: str = "demo"
+    amazon_api_base_url: str = ""
+    amazon_api_key: str = ""
+    # P0 向量化：deterministic（确定性测试向量）或 bge_m3（需安装 embedding extra）。
+    embedding_provider: str = "deterministic"
+    # P1 预留：配置 Anthropic Key 后 proposal 命名可切换 LLM，未配置走规则引擎。
+    anthropic_api_key: str = ""
 
 
 settings = Settings()

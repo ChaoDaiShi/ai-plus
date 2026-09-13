@@ -1,4 +1,4 @@
-"""FastAPI 应用工厂。/health 与任务接口真实可用；报告/SSE 仍 501 占位。"""
+"""FastAPI 应用工厂。/health、任务、报告与 SSE 全部真实可用。"""
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -44,7 +44,11 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health() -> dict:
-        return {"status": "ok", "version": "0.1.0", "env": settings.app_env}
+        payload: dict = {"status": "ok", "version": "0.1.0", "env": settings.app_env}
+        if settings.app_env != "prod":
+            # 非生产环境向本机前端披露预置项目 ID（与预置身份同一防线）。
+            payload["dev_project_id"] = settings.preset_project_id
+        return payload
 
     app.include_router(tasks.router, prefix="/api/v1")
     app.include_router(reports.router, prefix="/api/v1")

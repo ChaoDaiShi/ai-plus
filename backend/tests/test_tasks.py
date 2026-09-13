@@ -9,13 +9,19 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.pool import NullPool
 
 from app.api.deps import get_current_tenant_id
 from app.db.models import Project, Task, TaskItem, Tenant
 from app.db.session import get_session
 from app.main import create_app
 from app.services import tasks as task_svc
-from tests.support import requires_pg, run
+from tests.support import pg_url, requires_pg, run
 
 TODAY = date(2026, 9, 10)
 TENANT_A = uuid.uuid5(uuid.NAMESPACE_URL, "test03/tenant-a")
@@ -25,7 +31,10 @@ PROJECT_B = uuid.uuid5(uuid.NAMESPACE_URL, "test03/project-b")
 
 
 async def seed_tenant_project(session, tenant_id, project_id, marketplace="US"):
+    # 无 relationship 的裸 FK 之间，UOW 按类名字母序排 INSERT（Project < Tenant），
+    # 父行必须先 flush 落库再挂子对象。
     session.add(Tenant(id=tenant_id, name="t"))
+    await session.flush()
     session.add(
         Project(id=project_id, tenant_id=tenant_id, name="p", marketplace=marketplace)
     )
@@ -43,10 +52,16 @@ async def force_terminal_failed(session, task_id):
 
 
 def make_client(pg_session, tenant_id):
+    """TestClient 每个请求运行在独立 portal 循环上；共享 fixture session 的
+    asyncpg 连接跨循环会崩溃。改用 NullPool 引擎按请求新建 session，
+    连接随请求生灭，不跨循环复用。"""
     app = create_app()
+    engine = create_async_engine(pg_url(), poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def override_session():
-        yield pg_session
+        async with factory() as session:
+            yield session
 
     async def override_tenant():
         return tenant_id

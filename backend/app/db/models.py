@@ -263,6 +263,8 @@ class Report(Base):
     pipeline_version: Mapped[str] = mapped_column(String(32))
     model_version: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(32))
+    llm_model_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    clustering_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     availability: Mapped[str] = mapped_column(String(16))
     limitations: Mapped[list] = mapped_column(JSON)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
