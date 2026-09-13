@@ -8,13 +8,17 @@ import {
   Sliders,
   Wrench,
 } from 'lucide-vue-next';
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { InsightTask, PainPointCluster } from '../types';
+import type { ReportDto } from '../types/api';
 
-defineProps<{
-  currentTask: InsightTask;
-  allTasks: InsightTask[];
+const props = defineProps<{
+  currentTask: InsightTask | null;
+  report: ReportDto | null;
   clusters: PainPointCluster[];
+  allTasks: InsightTask[];
+  backendEnv: string;
 }>();
 
 const emit = defineEmits<{
@@ -24,6 +28,45 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const negativeRate = computed(() => {
+  const metric = props.report?.metrics?.sample_negative_rate;
+  return metric?.value ?? null;
+});
+
+const peakSeverity = computed(() => {
+  if (props.clusters.length === 0) return null;
+  return Math.max(...props.clusters.map(c => c.severity));
+});
+
+const proposalsCount = computed(() => {
+  if (!props.report) return 0;
+  return props.report.proposals.product.length + props.report.proposals.packaging.length;
+});
+
+const validReviews = computed(() => props.report?.coverage.valid_count ?? null);
+const totalReviews = computed(() => props.report?.coverage.raw_count ?? null);
+
+const statusLabel = (status: string): string => {
+  const table: Record<string, string> = {
+    completed: 'common.completed',
+    failed: 'common.failed',
+    running: 'common.running',
+    pending: 'common.pending',
+    canceled: 'common.canceled',
+  };
+  const key = table[status];
+  return key ? t(key) : status;
+};
+
+const statusClass = (status: string): string => {
+  if (status === 'completed') return 'text-emerald-400';
+  if (status === 'failed') return 'text-rose-400';
+  if (status === 'running' || status === 'pending') return 'text-[#7170ff]';
+  return 'text-zinc-400';
+};
+
+void props;
 </script>
 
 <template>
@@ -32,16 +75,20 @@ const { t } = useI18n();
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-[rgba(255,255,255,0.06)]">
       <div class="space-y-1.5 max-w-3xl">
         <div class="flex items-center gap-2 text-xs font-mono text-[#8a8f98]">
-          <span>{{ currentTask.asin }}</span>
+          <span>{{ currentTask?.asin ?? t('dashboard.noTask') }}</span>
           <span>·</span>
-          <span>{{ currentTask.marketplace }} {{ t('header.marketplace') }}</span>
-          <span>·</span>
-          <span>BSR #{{ currentTask.bsr }}</span>
-          <span>·</span>
-          <span>{{ currentTask.reviewCount.toLocaleString() }} Reviews</span>
+          <span>{{ currentTask?.marketplace ?? 'US' }} {{ t('header.marketplace') }}</span>
+          <template v-if="totalReviews !== null">
+            <span>·</span>
+            <span>{{ totalReviews.toLocaleString() }} {{ t('dashboard.reviewsRaw') }}</span>
+          </template>
+          <template v-if="backendEnv">
+            <span>·</span>
+            <span class="uppercase">{{ backendEnv }}</span>
+          </template>
         </div>
         <h1 class="text-xl sm:text-2xl font-medium tracking-tight text-[#f7f8f8]">
-          {{ currentTask.productTitle }}
+          {{ report?.product.title ?? currentTask?.title ?? t('dashboard.subtitle') }}
         </h1>
       </div>
 
@@ -57,7 +104,7 @@ const { t } = useI18n();
         </button>
 
         <button
-          @click="emit('navigate', 'agent')"
+          @click="emit('startNewTask')"
           class="ln-btn px-3.5 py-2 flex items-center gap-2"
         >
           <Play class="w-3.5 h-3.5 text-zinc-400" />
@@ -66,12 +113,13 @@ const { t } = useI18n();
       </div>
     </div>
 
-    <!-- 4 Clean, Quiet KPI Cards -->
+    <!-- 4 Clean, Quiet KPI Cards（全部来自真实报告，未评估项如实标注） -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
       <div class="ln-surface p-5 space-y-1">
         <div class="text-xs text-[#8a8f98]">{{ t('dashboard.negativeRate') }}</div>
         <div class="text-2xl font-semibold font-mono text-[#f7f8f8] tracking-tight">
-          {{ (currentTask.negativeRate * 100).toFixed(1) }}%
+          <template v-if="negativeRate !== null">{{ (negativeRate * 100).toFixed(1) }}%</template>
+          <template v-else>—</template>
         </div>
         <div class="text-[11px] text-[#5e626e] pt-1">
           {{ t('dashboard.negativeSub') }}
@@ -81,7 +129,10 @@ const { t } = useI18n();
       <div class="ln-surface p-5 space-y-1">
         <div class="text-xs text-[#8a8f98]">{{ t('dashboard.peakSeverity') }}</div>
         <div class="text-2xl font-semibold font-mono text-amber-400 tracking-tight">
-          4.8 <span class="text-xs font-normal text-[#5e626e]">/ 5.0</span>
+          <template v-if="peakSeverity !== null">
+            {{ peakSeverity }} <span class="text-xs font-normal text-[#5e626e]">/ 5.0</span>
+          </template>
+          <template v-else>—</template>
         </div>
         <div class="text-[11px] text-[#5e626e] pt-1">
           {{ t('dashboard.peakSub') }}
@@ -89,22 +140,35 @@ const { t } = useI18n();
       </div>
 
       <div class="ln-surface p-5 space-y-1">
+        <div class="text-xs text-[#8a8f98]">{{ t('dashboard.validReviews') }}</div>
+        <div class="text-2xl font-semibold font-mono text-[#f7f8f8] tracking-tight">
+          <template v-if="validReviews !== null">{{ validReviews.toLocaleString() }}</template>
+          <template v-else>—</template>
+        </div>
+        <div class="text-[11px] text-[#5e626e] pt-1">
+          {{ t('dashboard.validSub') }}
+        </div>
+      </div>
+
+      <div class="ln-surface p-5 space-y-1">
         <div class="text-xs text-[#8a8f98]">{{ t('dashboard.proposalsCount') }}</div>
         <div class="text-2xl font-semibold font-mono text-[#f7f8f8] tracking-tight">
-          6 <span class="text-xs font-normal text-[#5e626e]">{{ t('common.items') }}</span>
+          <template v-if="report">{{ proposalsCount }} <span class="text-xs font-normal text-[#5e626e]">{{ t('common.items') }}</span></template>
+          <template v-else>—</template>
         </div>
         <div class="text-[11px] text-[#5e626e] pt-1">
           {{ t('dashboard.proposalsSub') }}
         </div>
       </div>
 
-      <div class="ln-surface p-5 space-y-1">
-        <div class="text-xs text-[#8a8f98]">{{ t('dashboard.fbaSavings') }}</div>
-        <div class="text-2xl font-semibold font-mono text-emerald-400 tracking-tight">
-          +$4.60
+      <!-- FBA 节约额 P0 未评估（禁止假数字） -->
+      <div class="ln-surface p-5 space-y-1 col-span-2 lg:col-span-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <div class="text-xs text-[#8a8f98]">{{ t('dashboard.fbaSavings') }}</div>
+          <div class="text-sm font-mono text-[#8a8f98] pt-1">Not evaluated</div>
         </div>
-        <div class="text-[11px] text-[#5e626e] pt-1">
-          {{ t('dashboard.fbaSavingsSub') }}
+        <div class="text-[11px] text-[#5e626e] font-mono">
+          {{ t('dashboard.fbaNotEvaluatedNote') }}
         </div>
       </div>
     </div>
@@ -121,7 +185,7 @@ const { t } = useI18n();
             @click="emit('navigate', 'voc')"
             class="text-xs text-[#8a8f98] hover:text-[#f7f8f8] flex items-center gap-1 transition-colors"
           >
-            <span>{{ t('dashboard.galleryLink') }}</span>
+            <span>{{ t('dashboard.vocLink') }}</span>
             <ChevronRight class="w-3.5 h-3.5" />
           </button>
         </div>
@@ -143,7 +207,7 @@ const { t } = useI18n();
               </div>
               <div class="flex items-center gap-3 font-mono text-[11px] text-[#8a8f98]">
                 <span>{{ cluster.frequency }} {{ t('dashboard.frequency') }}</span>
-                <span class="text-amber-400">{{ t('dashboard.rating') }} {{ cluster.severity.toFixed(1) }}</span>
+                <span class="text-amber-400">{{ t('dashboard.rating') }} {{ cluster.severity }}</span>
               </div>
             </div>
 
@@ -156,8 +220,12 @@ const { t } = useI18n();
             </div>
 
             <p class="text-[11px] text-[#8a8f98] line-clamp-1">
-              "{{ cluster.translatedQuote }}"
+              "{{ cluster.sampleQuote }}"
             </p>
+          </div>
+
+          <div v-if="clusters.length === 0" class="p-6 text-center text-xs text-[#5e626e] font-mono">
+            {{ t('dashboard.noClusters') }}
           </div>
         </div>
       </div>
@@ -169,23 +237,23 @@ const { t } = useI18n();
           <div class="flex items-center justify-between">
             <span class="text-xs font-medium text-[#8a8f98]">{{ t('dashboard.financialStatus') }}</span>
             <span
-              v-if="currentTask.status === 'completed'"
+              v-if="report"
+              class="flex items-center gap-1.5 text-xs font-mono text-[#8a8f98]"
+            >
+              <ShieldAlert class="w-3.5 h-3.5 text-amber-400" />
+              <span>{{ t('dashboard.notEvaluated') }}</span>
+            </span>
+            <span
+              v-else-if="currentTask?.status === 'completed'"
               class="flex items-center gap-1.5 text-xs font-mono text-emerald-400"
             >
               <CheckCircle2 class="w-3.5 h-3.5" />
-              <span>{{ t('dashboard.approved') }}</span>
-            </span>
-            <span
-              v-else-if="currentTask.status === 'vetoed'"
-              class="flex items-center gap-1.5 text-xs font-mono text-rose-400"
-            >
-              <ShieldAlert class="w-3.5 h-3.5" />
-              <span>{{ t('dashboard.vetoed') }}</span>
+              <span>{{ t('common.completed') }}</span>
             </span>
           </div>
 
           <p class="text-xs text-[#8a8f98] leading-relaxed">
-            {{ t('dashboard.financialDesc') }}
+            {{ t('dashboard.financialDescP0') }}
           </p>
 
           <button
@@ -207,11 +275,11 @@ const { t } = useI18n();
           <div class="ln-surface divide-y divide-[rgba(255,255,255,0.05)] overflow-hidden">
             <div
               v-for="task in allTasks"
-              :key="task.id"
-              @click="emit('selectTask', task.id)"
+              :key="task.taskId"
+              @click="emit('selectTask', task.taskId)"
               :class="[
                 'p-3.5 flex items-center justify-between text-xs cursor-pointer transition-colors',
-                currentTask.id === task.id
+                currentTask?.taskId === task.taskId
                   ? 'bg-[rgba(255,255,255,0.04)] text-[#f7f8f8]'
                   : 'hover:bg-[rgba(255,255,255,0.02)] text-[#8a8f98]'
               ]"
@@ -219,15 +287,17 @@ const { t } = useI18n();
               <div class="space-y-0.5">
                 <div class="font-mono font-medium text-[#f7f8f8]">{{ task.asin }}</div>
                 <div class="text-[11px] text-[#5e626e] line-clamp-1 max-w-[200px]">
-                  {{ task.productTitle }}
+                  {{ task.createdAt }}
                 </div>
               </div>
 
-              <div class="text-right font-mono text-[11px]">
-                <span v-if="task.status === 'completed'" class="text-emerald-400">{{ t('common.completed') }}</span>
-                <span v-else-if="task.status === 'vetoed'" class="text-rose-400">{{ t('common.vetoed') }}</span>
-                <span v-else class="text-[#7170ff]">{{ t('common.running') }}</span>
+              <div class="text-right font-mono text-[11px]" :class="statusClass(task.status)">
+                {{ statusLabel(task.status) }}
               </div>
+            </div>
+
+            <div v-if="allTasks.length === 0" class="p-6 text-center text-xs text-[#5e626e] font-mono">
+              {{ t('dashboard.noTasks') }}
             </div>
           </div>
         </div>

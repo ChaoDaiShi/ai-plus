@@ -7,117 +7,73 @@ export interface AuthUser {
   avatar?: string;
 }
 
-export type Marketplace = 'US' | 'DE' | 'JP' | 'UK';
+export type Marketplace = 'US';
 
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'vetoed';
-
+/** 后端 P0 七节点（与 backend NODE_ORDER 对齐）。 */
 export type AgentNode =
   | 'ingestion'
+  | 'normalization'
+  | 'embedding'
   | 'clustering'
-  | 'vlm_inspection'
-  | 'dual_column_proposal'
-  | 'financial_veto';
+  | 'proposal'
+  | 'evidence_validation'
+  | 'publish';
+
+export type TaskStatusUi = 'pending' | 'running' | 'completed' | 'failed' | 'canceled' | 'vetoed';
 
 export interface TaskNodeInfo {
   key: AgentNode;
   name: string;
   desc: string;
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'vetoed';
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'canceled' | 'skipped';
   durationMs?: number;
   outputSummary?: string;
+  progress?: number;
 }
 
+/** 任务工作区摘要（由后端任务快照 + 报告派生）。 */
 export interface InsightTask {
-  id: string;
+  taskId: string;
+  itemId: string;
   asin: string;
-  productTitle: string;
+  title: string;
   marketplace: Marketplace;
-  brand: string;
-  currentPrice: number;
-  bsr: number;
-  category: string;
-  status: TaskStatus;
+  status: TaskStatusUi;
   progress: number;
-  currentNode: AgentNode;
-  nodes: TaskNodeInfo[];
   createdAt: string;
   completedAt?: string;
-  reviewCount: number;
-  negativeRate: number;
-  vetoTriggered?: boolean;
+  reportId?: string | null;
+  nodes: TaskNodeInfo[];
 }
 
+/** 痛点簇视图模型（源自 Report.clusters）。 */
 export interface PainPointCluster {
   id: string;
   name: string;
-  category: '结构强度' | '热工与材质' | '材质升级' | '规格公差' | '表面处理' | '包装与履约';
+  category: string;
+  categoryLabel: string;
   frequency: number;
-  severity: number; // 1 to 5
-  shareRatio: number; // 0 to 1
+  denominator: number;
+  severity: number;
+  shareRatio: number;
   sampleQuote: string;
   translatedQuote: string;
+  sampleReviewId: string;
   reviewIds: string[];
   photoCount: number;
-}
-
-export interface VisualEvidence {
-  id: string;
-  asin: string;
-  title: string;
-  imageUrl: string;
-  defectType: string;
-  confidence: number;
-  damagedPart: string;
-  rootCause: string;
-  reviewRating: number;
-  reviewDate: string;
-  reviewText: string;
-  bbox?: { x: number; y: number; w: number; h: number };
-}
-
-export interface PhysicalProposal {
-  id: string;
-  title: string;
-  targetClusterId: string;
-  targetClusterName: string;
-  category: '材质升级' | '结构防呆' | '模具公差' | '散热设计';
-  problemStatement: string;
-  actionPlan: string;
-  engineeringSpec: string;
-  costDeltaUsd: number;
-  leadTimeDays: number;
   evidenceCount: number;
-  photoCount: number;
+  severityReason: string;
 }
 
-export interface PackagingProposal {
+/** 双栏建议视图模型（源自 Report.proposals）。 */
+export interface ProposalView {
   id: string;
+  column: 'PRODUCT' | 'PACKAGING';
   title: string;
-  targetClusterId: string;
-  targetClusterName: string;
-  category: '尺寸降阶 (Tier Down)' | '抗摔缓冲' | '防呆说明书' | '环保包材';
-  problemStatement: string;
-  actionPlan: string;
-  engineeringSpec: string;
-  fbaSavingsPerUnit: number;
-  leadTimeDays: number;
-  annualSavingsUsd: number;
+  problem: string;
+  action: string;
+  expectedEffect: string;
+  verificationRequired: string[];
   evidenceCount: number;
-}
-
-export interface FinancialSimulationResult {
-  moldCostUsd: number;
-  moq: number;
-  unitPriceUsd: number;
-  baseMargin: number; // 0-1
-  targetPaybackMonths: number;
-  fbaSavingsPerUnit: number;
-  amortizedMoldPerUnit: number;
-  projectedMargin: number;
-  breakevenUnits: number;
-  calculatedPaybackMonths: number;
-  isVetoed: boolean;
-  vetoReasons: string[];
-  downgradeRecommendation: string;
-  backtestAccuracy: number;
+  targetClusterIds: string[];
 }

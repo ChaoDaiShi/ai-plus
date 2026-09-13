@@ -21,8 +21,10 @@ const props = defineProps<{
   activeTab: 'dashboard' | 'agent' | 'voc' | 'proposals' | 'financial';
   selectedMarketplace: Marketplace;
   selectedAsin: string;
+  selectedTitle?: string;
   isAgentRunning?: boolean;
   currentUser?: AuthUser | null;
+  knownAsins?: { asin: string; marketplace: Marketplace }[];
 }>();
 
 const emit = defineEmits<{
@@ -41,7 +43,25 @@ const isMarketplaceMenuOpen = ref(false);
 const isLangMenuOpen = ref(false);
 const isUserMenuOpen = ref(false);
 
-const marketplaces: Marketplace[] = ['US', 'DE', 'JP', 'UK'];
+// P0 后端仅支持 amazon/US（api.md §4.1）；如实收敛选项。
+const marketplaces: Marketplace[] = ['US'];
+
+const DEMO_ASIN = 'B08N5WRWNW';
+
+const asinOptions = computed(() => {
+  const seen = new Set<string>();
+  const options: { asin: string; marketplace: Marketplace }[] = [];
+  for (const option of props.knownAsins ?? []) {
+    if (!seen.has(option.asin)) {
+      seen.add(option.asin);
+      options.push(option);
+    }
+  }
+  if (!seen.has(DEMO_ASIN)) {
+    options.unshift({ asin: DEMO_ASIN, marketplace: 'US' });
+  }
+  return options;
+});
 
 const navItems = computed(() => [
   { key: 'dashboard', label: t('nav.overview'), icon: LayoutDashboard },
@@ -51,14 +71,11 @@ const navItems = computed(() => [
   { key: 'financial', label: t('nav.financial'), icon: ShieldCheck },
 ] as const);
 
-const popularAsins: { asin: string; marketplace: Marketplace }[] = [
-  { asin: 'B08N5WRWNW', marketplace: 'US' },
-  { asin: 'B09V7K4P92', marketplace: 'DE' },
-  { asin: 'B0CX87M2L1', marketplace: 'US' },
-];
-
-const getAsinName = (asin: string) => {
-  return t(`header.products.${asin}`);
+const getAsinName = (asin: string): string => {
+  if (props.selectedTitle && asin === props.selectedAsin) return props.selectedTitle;
+  const key = `header.products.${asin}`;
+  // i18n 未收录的 ASIN 直接显示 ASIN 本身
+  return t(key) === key ? asin : t(key);
 };
 
 const currentLocaleInfo = computed(() => {
@@ -177,7 +194,7 @@ onBeforeUnmount(() => {
                 {{ t('header.selectProduct') }}
               </div>
               <button
-                v-for="item in popularAsins"
+                v-for="item in asinOptions"
                 :key="item.asin"
                 @click="selectAsin(item.asin)"
                 class="w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left transition-colors cursor-pointer"

@@ -3,18 +3,19 @@ import {
   Box,
   Download,
   ExternalLink,
+  ShieldQuestion,
   Wrench,
 } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
-import type { PackagingProposal, PhysicalProposal } from '../types';
+import type { ProposalView } from '../types';
 
 defineProps<{
-  physicalProposals: PhysicalProposal[];
-  packagingProposals: PackagingProposal[];
+  physicalProposals: ProposalView[];
+  packagingProposals: ProposalView[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'viewEvidence', target: { title: string; count: number }): void;
+  (e: 'viewEvidence', target: { title: string; proposalId: string; count: number }): void;
   (e: 'exportRfc'): void;
 }>();
 
@@ -23,7 +24,7 @@ const { t } = useI18n();
 
 <template>
   <div class="space-y-6">
-    <!-- Top Executive Header & Net ROI Summary -->
+    <!-- Top Executive Header -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-[rgba(255,255,255,0.06)]">
       <div class="space-y-1">
         <h1 class="text-xl font-medium tracking-tight text-[#f7f8f8]">
@@ -35,13 +36,10 @@ const { t } = useI18n();
       </div>
 
       <div class="flex items-center gap-3">
-        <!-- Minimal Net Profit Pill -->
-        <div class="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] text-xs font-mono">
-          <span class="text-[#8a8f98]">{{ t('proposals.costDelta') }} <strong class="text-amber-400">+$2.95</strong></span>
-          <span class="text-zinc-600">|</span>
-          <span class="text-[#8a8f98]">{{ t('proposals.logisticsSavings') }} <strong class="text-emerald-400">-$5.90</strong></span>
-          <span class="text-zinc-600">|</span>
-          <span class="text-emerald-400 font-medium">{{ t('proposals.netGain') }}</span>
+        <!-- P0 财务未评估（禁止假数字，任务 §22） -->
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.08)] text-xs font-mono text-[#8a8f98]">
+          <ShieldQuestion class="w-3.5 h-3.5 text-amber-400" />
+          <span>{{ t('proposals.financialNotEvaluated') }}</span>
         </div>
 
         <button
@@ -65,7 +63,9 @@ const { t } = useI18n();
               {{ t('proposals.leftTitle') }}
             </h2>
           </div>
-          <span class="text-[11px] font-mono text-[#8a8f98]">{{ t('proposals.leftSubtitle') }}</span>
+          <span class="text-[11px] font-mono text-[#8a8f98]">
+            {{ physicalProposals.length }} {{ t('common.items') }}
+          </span>
         </div>
 
         <div class="space-y-3">
@@ -74,37 +74,47 @@ const { t } = useI18n();
             :key="prop.id"
             class="ln-surface p-4 space-y-3 hover:border-[rgba(255,255,255,0.12)] transition-colors"
           >
-            <div class="flex items-center justify-between text-xs">
-              <span class="font-medium text-[#f7f8f8]">{{ prop.title }}</span>
-              <span class="text-[11px] font-mono text-[#8a8f98]">{{ prop.category }}</span>
-            </div>
+            <span class="text-xs font-medium text-[#f7f8f8] block">{{ prop.title }}</span>
 
             <!-- Problem -> Solution in clean typography -->
             <div class="space-y-1.5 text-xs text-[#8a8f98] leading-relaxed">
-              <p><strong class="text-zinc-400">{{ t('proposals.originalFlaw') }}</strong>{{ prop.problemStatement }}</p>
-              <p><strong class="text-zinc-400">{{ t('proposals.engineeringPlan') }}</strong>{{ prop.actionPlan }}</p>
+              <p v-if="prop.problem"><strong class="text-zinc-400">{{ t('proposals.originalFlaw') }}</strong>{{ prop.problem }}</p>
+              <p><strong class="text-zinc-400">{{ t('proposals.engineeringPlan') }}</strong>{{ prop.action }}</p>
             </div>
 
-            <!-- Factory Spec Code Snippet -->
+            <!-- Expected effect -->
             <div class="p-2 rounded bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.05)] text-[11px] font-mono text-zinc-300">
-              <span class="text-zinc-500">SPEC: </span>{{ prop.engineeringSpec }}
+              <span class="text-zinc-500">EFFECT: </span>{{ prop.expectedEffect }}
             </div>
 
-            <!-- Footer: Cost Delta, Lead Time, Evidence -->
-            <div class="flex items-center justify-between text-[11px] font-mono pt-1 text-[#8a8f98]">
-              <div class="flex items-center gap-3">
-                <span>{{ t('proposals.costDelta') }}: <strong class="text-zinc-300">+${{ prop.costDeltaUsd.toFixed(2) }}</strong></span>
-                <span>{{ t('proposals.leadTime') }} {{ prop.leadTimeDays }} {{ t('common.days') }}</span>
-              </div>
+            <!-- Verification required tags -->
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="item in prop.verificationRequired"
+                :key="item"
+                class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300"
+              >
+                ✓ {{ item }}
+              </span>
+            </div>
 
+            <!-- Footer: Evidence -->
+            <div class="flex items-center justify-end text-[11px] font-mono pt-1">
               <button
-                @click="emit('viewEvidence', { title: prop.title, count: prop.evidenceCount })"
+                @click="emit('viewEvidence', { title: prop.title, proposalId: prop.id, count: prop.evidenceCount })"
                 class="text-[#7170ff] hover:text-[#828fff] flex items-center gap-1 transition-colors"
               >
                 <span>{{ t('proposals.traceEvidence', { count: prop.evidenceCount }) }}</span>
                 <ExternalLink class="w-3 h-3" />
               </button>
             </div>
+          </div>
+
+          <div
+            v-if="physicalProposals.length === 0"
+            class="ln-surface p-6 text-center text-xs text-[#5e626e] font-mono"
+          >
+            {{ t('proposals.emptyColumn') }}
           </div>
         </div>
       </div>
@@ -118,7 +128,9 @@ const { t } = useI18n();
               {{ t('proposals.rightTitle') }}
             </h2>
           </div>
-          <span class="text-[11px] font-mono text-[#8a8f98]">{{ t('proposals.rightSubtitle') }}</span>
+          <span class="text-[11px] font-mono text-[#8a8f98]">
+            {{ packagingProposals.length }} {{ t('common.items') }}
+          </span>
         </div>
 
         <div class="space-y-3">
@@ -127,37 +139,43 @@ const { t } = useI18n();
             :key="pkg.id"
             class="ln-surface p-4 space-y-3 hover:border-[rgba(255,255,255,0.12)] transition-colors"
           >
-            <div class="flex items-center justify-between text-xs">
-              <span class="font-medium text-[#f7f8f8]">{{ pkg.title }}</span>
-              <span class="text-[11px] font-mono text-[#8a8f98]">{{ pkg.category }}</span>
-            </div>
+            <span class="text-xs font-medium text-[#f7f8f8] block">{{ pkg.title }}</span>
 
-            <!-- Problem -> Solution in clean typography -->
             <div class="space-y-1.5 text-xs text-[#8a8f98] leading-relaxed">
-              <p><strong class="text-zinc-400">{{ t('proposals.shippingFlaw') }}</strong>{{ pkg.problemStatement }}</p>
-              <p><strong class="text-zinc-400">{{ t('proposals.packagingPlan') }}</strong>{{ pkg.actionPlan }}</p>
+              <p v-if="pkg.problem"><strong class="text-zinc-400">{{ t('proposals.shippingFlaw') }}</strong>{{ pkg.problem }}</p>
+              <p><strong class="text-zinc-400">{{ t('proposals.packagingPlan') }}</strong>{{ pkg.action }}</p>
             </div>
 
-            <!-- Packaging Metric Snippet -->
             <div class="p-2 rounded bg-[rgba(0,0,0,0.3)] border border-[rgba(255,255,255,0.05)] text-[11px] font-mono text-zinc-300">
-              <span class="text-zinc-500">SAVINGS: </span>{{ pkg.engineeringSpec }}
+              <span class="text-zinc-500">EFFECT: </span>{{ pkg.expectedEffect }}
             </div>
 
-            <!-- Footer: FBA Savings, Lead Time, Evidence -->
-            <div class="flex items-center justify-between text-[11px] font-mono pt-1 text-[#8a8f98]">
-              <div class="flex items-center gap-3">
-                <span>{{ t('proposals.unitSavings') }} <strong class="text-emerald-400">${{ pkg.fbaSavingsPerUnit.toFixed(2) }}</strong></span>
-                <span>{{ t('proposals.leadTime') }} {{ pkg.leadTimeDays }} {{ t('common.days') }}</span>
-              </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span
+                v-for="item in pkg.verificationRequired"
+                :key="item"
+                class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300"
+              >
+                ✓ {{ item }}
+              </span>
+            </div>
 
+            <div class="flex items-center justify-end text-[11px] font-mono pt-1">
               <button
-                @click="emit('viewEvidence', { title: pkg.title, count: pkg.evidenceCount })"
+                @click="emit('viewEvidence', { title: pkg.title, proposalId: pkg.id, count: pkg.evidenceCount })"
                 class="text-[#7170ff] hover:text-[#828fff] flex items-center gap-1 transition-colors"
               >
                 <span>{{ t('proposals.traceEvidence', { count: pkg.evidenceCount }) }}</span>
                 <ExternalLink class="w-3 h-3" />
               </button>
             </div>
+          </div>
+
+          <div
+            v-if="packagingProposals.length === 0"
+            class="ln-surface p-6 text-center text-xs text-[#5e626e] font-mono"
+          >
+            {{ t('proposals.emptyColumn') }}
           </div>
         </div>
       </div>
