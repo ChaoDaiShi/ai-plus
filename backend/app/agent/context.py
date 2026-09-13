@@ -292,7 +292,9 @@ def _node_message(node: str, summary: dict) -> str:
     if node == "embedding":
         return f"Embedded {summary.get('fragments', 0)} fragments ({summary.get('embedding_model')})"
     if node == "clustering":
-        return f"Formed {summary.get('clusters', 0)} pain-point clusters"
+        clusters = summary.get("clusters", [])
+        count = len(clusters) if isinstance(clusters, list) else clusters
+        return f"Formed {count} pain-point clusters"
     if node == "proposal":
         return (
             f"Generated {summary.get('body', 0)} body + {summary.get('packaging', 0)} "
