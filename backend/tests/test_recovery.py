@@ -153,6 +153,7 @@ def test_cancel_before_publish_wins(pg_session):
                 .where(TaskEvent.task_id == second_id)
             )
         ).scalar()
+        await pg_session.commit()  # 裸 execute 的 autobegin 事务需显式结束
         assert (
             await worker_graph.finalize_task(
                 pg_session, tenant_id=TENANT_A, task_id=second_id

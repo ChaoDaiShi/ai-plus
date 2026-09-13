@@ -49,10 +49,17 @@ def parse_after(value: str) -> int:
     return after
 
 
+_ENVELOPE_FIELDS = frozenset({"item_id", "attempt", "occurred_at"})
+
+
 def business_event_to_sse(
     task_id: str, seq: int, event_type: str, payload: dict
 ) -> tuple[str, str, str]:
-    """业务事件转 SSE 三元组（事件名、id、data），字段见 api.md §6.1。"""
+    """业务事件转 SSE 三元组（事件名、id、data），字段见 api.md §6.1。
+
+    DB payload 将信封字段（item_id/attempt/occurred_at）与业务字段平铺存储；
+    SSE 的嵌套 payload 只包含业务字段。
+    """
     data = json.dumps(
         {
             "schema_version": SCHEMA_VERSION,
@@ -61,7 +68,11 @@ def business_event_to_sse(
             "item_id": payload.get("item_id"),
             "attempt": payload.get("attempt"),
             "occurred_at": payload.get("occurred_at"),
-            "payload": payload.get("payload", {}),
+            "payload": {
+                key: value
+                for key, value in payload.items()
+                if key not in _ENVELOPE_FIELDS
+            },
         },
         ensure_ascii=False,
     )

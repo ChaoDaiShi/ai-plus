@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.config import settings
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+# test 模式（多事件循环客户端）用 NullPool；常规 dev/prod 保持连接池。
+if settings.app_env == "test":
+    from sqlalchemy.pool import NullPool
+
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True, poolclass=NullPool)
+else:
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
 SessionFactory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

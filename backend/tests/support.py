@@ -35,9 +35,21 @@ requires_pg = pytest.mark.skipif(
 )
 
 
+_loop: asyncio.AbstractEventLoop | None = None
+
+
 def run(coro):
-    """无 pytest-asyncio 时的同步入口：asyncio.run 包裹单个协程。"""
-    return asyncio.run(coro)
+    """无 pytest-asyncio 时的同步入口。
+
+    Windows 上 asyncpg 连接绑定创建时的事件循环；若每次都用 asyncio.run
+    新建循环，fixture 建立的连接会在后续测试循环中崩溃。改用会话级共享
+    循环，保证同一连接始终运行在同一循环上。
+    """
+    global _loop
+    if _loop is None:
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+    return _loop.run_until_complete(coro)
 
 
 async def reset_pg(session) -> None:

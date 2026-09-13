@@ -1,17 +1,10 @@
-"""P0 七个执行节点（技术方案 §5.1）。步骤 2 之前全部为 stub，禁止静默返回假产物。"""
+"""节点注册表 re-export（历史入口保持兼容）。
 
-from typing import Any
+P0 节点顺序、展示元数据与业务实现的唯一事实来源在
+app.agent.nodes / app.agent.nodes.*；本模块仅为 services.tasks 等
+既有导入方保留 NODE_ORDER 入口，不再包含任何 stub。
+"""
 
-NODE_ORDER: tuple[str, ...] = (
-    "ingestion",
-    "normalization",
-    "embedding",
-    "clustering",
-    "proposal",
-    "evidence_validation",
-    "publish",
-)
+from app.agent.nodes import NODE_DISPLAY, NODE_ORDER, NODE_PROGRESS
 
-
-async def run_node(node: str, item_id: str, attempt: int) -> dict[str, Any]:
-    raise NotImplementedError(f"节点 {node}（item={item_id}, attempt={attempt}）在步骤 2 实现")
+__all__ = ["NODE_ORDER", "NODE_DISPLAY", "NODE_PROGRESS"]

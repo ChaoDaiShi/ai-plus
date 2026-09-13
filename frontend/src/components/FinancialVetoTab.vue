@@ -77,6 +77,11 @@ const applyVetoScenario = () => {
 
 <template>
   <div class="space-y-6">
+    <div class="flex items-center gap-2">
+      <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/25 text-amber-300">P1 · UI Demo</span>
+      <span class="text-[11px] text-[#5e626e] font-mono">财务否决在 P0 未接入真实数据，以下为参数沙盘演示</span>
+    </div>
+
     <!-- Top Header & Preset Controls -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[rgba(255,255,255,0.06)]">
       <div class="space-y-1">

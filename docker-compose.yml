@@ -15,21 +15,13 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   migrate:
     build: ./backend
     command: ["uv", "run", "--no-sync", "alembic", "upgrade", "head"]
     environment:
-      APP_ENV: prod
+      # Demo/dev 栈：预置身份与演示数据集仅在该模式下可用（生产拒绝，见
+      # app.api.deps / app.agent.providers.reviews）。
+      APP_ENV: dev
       DATABASE_URL: postgresql+asyncpg://insightx:insightx@postgres:5432/insightx
     depends_on:
       postgres:
@@ -38,9 +30,10 @@ services:
   backend:
     build: ./backend
     environment:
-      APP_ENV: prod
+      APP_ENV: dev
       DATABASE_URL: postgresql+asyncpg://insightx:insightx@postgres:5432/insightx
-      REDIS_URL: redis://redis:6379/0
+      AMAZON_PROVIDER: demo
+      EMBEDDING_PROVIDER: deterministic
       CORS_ORIGINS: '["http://localhost:5173"]'
     ports:
       - "8000:8000"
@@ -50,13 +43,24 @@ services:
       postgres:
         condition: service_healthy
 
-  # P0：worker 当前为空轮询（阶段 04 接入真实执行），仅验证启动与数据库连通。
+  seed:
+    build: ./backend
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.db.seed_dev"]
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+asyncpg://insightx:insightx@postgres:5432/insightx
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   worker:
     build: ./backend
     command: ["uv", "run", "--no-sync", "python", "-m", "app.worker"]
     environment:
-      APP_ENV: prod
+      APP_ENV: dev
       DATABASE_URL: postgresql+asyncpg://insightx:insightx@postgres:5432/insightx
+      AMAZON_PROVIDER: demo
+      EMBEDDING_PROVIDER: deterministic
     depends_on:
       migrate:
         condition: service_completed_successfully

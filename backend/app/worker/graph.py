@@ -1,11 +1,11 @@
-"""分项执行图（阶段 04）：租约守卫、取消协作、重试分类、终态聚合。
+"""分项执行图（阶段 04 + LangGraph 接入）：租约守卫、取消协作、重试分类、终态聚合。
 
-fixture 仅测试/开发入口，生产拒绝；fixture 之外走真实 run_node，
-现阶段节点未实现则走明确失败路径，不返回假成功。
+fixture 仅测试/开发入口，生产拒绝；fixture 之外走 LangGraph P0 工作流
+（app.agent.workflow），业务执行失败走明确失败路径，不返回假成功。
 恢复语义：已提交的 COMPLETED 节点行直接复用，不重新执行、不补发事件；
 同一节点的新版本行只在恢复继续时写入。
-LangGraph 图绑定待依赖可用后接入：本文件即执行语义的事实来源，
-后续绑定不得改变这里的租约/取消/幂等/终态规则。
+责任划分（任务 §5）：本模块保留领取后的执行语义（租约/取消/幂等/终态），
+LangGraph 负责业务节点编排，Service/Provider 负责节点业务逻辑。
 """
 
 import asyncio
@@ -15,11 +15,12 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.nodes import NODE_ORDER
+from app.api.schemas import NodeStatus
 from app.config import settings
 from app.db.models import ItemNode, Task, TaskItem
 from app.services import events as event_svc
 from app.services.tasks import TERMINAL_STATUSES, TaskStatus, utcnow
-from app.worker.nodes import NODE_ORDER, run_node
 
 MAX_NODE_RETRIES = 3  # 瞬时错误最多重试 3 次（首次 + 3 次 = 4 次尝试）
 BACKOFF_DELAYS = [2, 4, 8]
@@ -189,12 +190,6 @@ async def _emit_node_event(
     )
 
 
-async def _execute_node_real(node: str, item_id: uuid.UUID, attempt: int) -> dict | None:
-    """真实节点执行。现阶段实现抛 NotImplementedError，上层按永久失败处理。"""
-    await run_node(node, str(item_id), attempt)
-    return None
-
-
 async def run_item(
     session: AsyncSession,
     *,
@@ -204,159 +199,80 @@ async def run_item(
     lease_version: int,
     fixture: dict | None = None,
     sleep=asyncio.sleep,
+    session_factory=None,
 ) -> str:
     """执行单个分项，返回终态（COMPLETED/FAILED/CANCELED）或 "STOLEN"（租约丢失）。
 
-    fixture 为 None 时走真实 run_node；恢复时复用已提交的 COMPLETED 产物。
+    fixture 为 None 时启动 LangGraph P0 工作流（真实业务节点）；
+    恢复时复用已提交的 COMPLETED 产物。
     """
     if fixture is not None:
         if settings.app_env == "prod":
             raise RuntimeError("生产环境拒绝测试夹具")
         node_outcomes = validate_fixture(fixture)
     else:
-        node_outcomes = {}
+        node_outcomes = None
+
+    # 延迟导入：agent 层依赖本模块的执行语义，避免循环导入。
+    from app.agent.context import NodeRunContext
+    from app.agent.nodes.common import load_item_context
+    from app.agent.state import initial_state
+    from app.agent.workflow import build_p0_workflow
+    from app.db.session import SessionFactory
 
     async with session.begin():
-        item = (
-            await session.execute(
-                select(TaskItem).where(
-                    TaskItem.id == item_id, TaskItem.tenant_id == tenant_id
-                )
-            )
-        ).scalar_one_or_none()
-        if item is None:
-            raise ValueError("分项不存在或不属于当前企业")
-        task_id, attempt = item.task_id, item.attempt
+        item, product, window = await load_item_context(session, tenant_id, item_id)
+        task_id, attempt, product_id = item.task_id, item.attempt, item.product_id
 
-    for index, node in enumerate(NODE_ORDER):
-        if await _cancel_requested(session, tenant_id, task_id):
-            await _finalize_cancel(
-                session,
-                tenant_id=tenant_id,
-                task_id=task_id,
-                item_id=item_id,
-                attempt=attempt,
-                node_index=index,
-            )
-            return TaskStatus.CANCELED.value
-        if not await _lease_ok(session, item_id, worker_id, lease_version):
-            return "STOLEN"
-
-        existing = await _existing_versions(session, item_id, attempt, node)
-        if any(r.status == TaskStatus.COMPLETED.value for r in existing):
-            continue  # 恢复：复用已提交产物，不重新执行、不补发事件
-
-        outcome = node_outcomes.get(node)
-        if outcome is not None and outcome["status"] == "skipped":
-            row, inserted = await _write_node_row(
-                session,
-                tenant_id=tenant_id,
-                item_id=item_id,
-                attempt=attempt,
-                node=node,
-                status=TaskStatus.SKIPPED.value,
-                started_at=None,
-                completed_at=utcnow(),
-                duration_ms=outcome.get("duration_ms"),
-                output_version="v1",
-                output_summary=None,
-                skip_reason=outcome.get("skip_reason"),
-            )
-            if inserted:
-                await _emit_node_event(
-                    session,
-                    tenant_id=tenant_id,
-                    task_id=task_id,
-                    item_id=item_id,
-                    attempt=attempt,
-                    node=node,
-                    status=row.status,
-                    duration_ms=row.duration_ms,
-                    skip_reason=row.skip_reason,
-                )
-            continue
-
-        # completed / failed / 真实执行：内存中重试，只落最终版本行
-        version = f"v{len(existing) + 1}"
-        outcome_status = TaskStatus.FAILED.value
-        summary: dict | None = None
-        duration_ms: int | None = None
-        error_text: str | None = None
-        for try_index in range(1, MAX_NODE_RETRIES + 2):
-            started = utcnow()
-            kind = "permanent"
-            error_text = None
-            try:
-                if outcome is not None:
-                    if outcome["status"] == "completed":
-                        summary = outcome.get("output_summary")
-                        outcome_status = TaskStatus.COMPLETED.value
-                    else:
-                        kind = outcome.get("error_kind", "permanent")
-                        error_text = outcome.get("error", "fixture failure")
-                        raise RuntimeError(error_text)
-                else:
-                    summary = await _execute_node_real(node, item_id, attempt)
-                    outcome_status = TaskStatus.COMPLETED.value
-            except Exception as exc:  # noqa: BLE001 — 分类后记录
-                if outcome is None:
-                    kind = classify_error(exc)
-                error_text = error_text or str(exc)
-            ended = utcnow()
-            duration_ms = int((ended - started).total_seconds() * 1000)
-            if outcome_status == TaskStatus.COMPLETED.value or kind != "transient":
-                break
-            if try_index <= MAX_NODE_RETRIES:
-                await sleep(backoff_delays()[try_index - 1])
-
-        row, inserted = await _write_node_row(
-            session,
-            tenant_id=tenant_id,
-            item_id=item_id,
-            attempt=attempt,
-            node=node,
-            status=outcome_status,
-            started_at=started,
-            completed_at=ended,
-            duration_ms=duration_ms,
-            output_version=version,
-            output_summary=summary,
-            skip_reason=None,
+    ctx = NodeRunContext(
+        session=session,
+        session_factory=session_factory or SessionFactory,
+        tenant_id=tenant_id,
+        task_id=task_id,
+        item_id=item_id,
+        product_id=product_id,
+        attempt=attempt,
+        worker_id=worker_id,
+        lease_version=lease_version,
+        node_outcomes=node_outcomes,
+        sleep=sleep,
+    )
+    graph = build_p0_workflow(ctx)
+    final = await graph.ainvoke(
+        initial_state(
+            task_id=str(task_id),
+            item_id=str(item_id),
+            product_id=str(product_id),
+            asin=product.asin,
+            marketplace=product.marketplace,
+            window=dict(window),
         )
-        if inserted:
-            await _emit_node_event(
-                session,
-                tenant_id=tenant_id,
-                task_id=task_id,
-                item_id=item_id,
-                attempt=attempt,
-                node=node,
-                status=row.status,
-                duration_ms=row.duration_ms,
-                skip_reason=None,
-            )
-        if row.status != TaskStatus.COMPLETED.value:
-            await _finalize_item_failed(
-                session,
-                tenant_id=tenant_id,
-                task_id=task_id,
-                item_id=item_id,
-                attempt=attempt,
-                node_index=index,
-                error=error_text or "节点执行失败",
-            )
-            return TaskStatus.FAILED.value
+    )
 
-    if await _cancel_requested(session, tenant_id, task_id):
+    stop_reason = final.get("stop_reason")
+    if stop_reason == "stolen":
+        return "STOLEN"
+    if stop_reason == "canceled":
         await _finalize_cancel(
             session,
             tenant_id=tenant_id,
             task_id=task_id,
             item_id=item_id,
             attempt=attempt,
-            node_index=len(NODE_ORDER),
+            node_index=final.get("node_index", 0),
         )
         return TaskStatus.CANCELED.value
+    if stop_reason == "failed":
+        await _finalize_item_failed(
+            session,
+            tenant_id=tenant_id,
+            task_id=task_id,
+            item_id=item_id,
+            attempt=attempt,
+            node_index=final.get("node_index", 0),
+            error=final.get("error") or "节点执行失败",
+        )
+        return TaskStatus.FAILED.value
     async with session.begin():
         item = (
             await session.execute(select(TaskItem).where(TaskItem.id == item_id))
@@ -386,7 +302,7 @@ async def _finalize_item_failed(
             item_id=item_id,
             attempt=attempt,
             node=rest,
-            status=TaskStatus.SKIPPED.value,
+            status=NodeStatus.SKIPPED.value,
             started_at=None,
             completed_at=utcnow(),
             duration_ms=None,
@@ -402,7 +318,7 @@ async def _finalize_item_failed(
                 item_id=item_id,
                 attempt=attempt,
                 node=rest,
-                status=TaskStatus.SKIPPED.value,
+                status=NodeStatus.SKIPPED.value,
                 duration_ms=None,
                 skip_reason="CASCADE",
             )
@@ -430,7 +346,7 @@ async def _finalize_cancel(
 ) -> None:
     for position, rest in enumerate(NODE_ORDER[node_index:]):
         status = (
-            TaskStatus.CANCELED.value if position == 0 else TaskStatus.SKIPPED.value
+            TaskStatus.CANCELED.value if position == 0 else NodeStatus.SKIPPED.value
         )
         row, inserted = await _write_node_row(
             session,

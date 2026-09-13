@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import {
   Calendar,
+  ExternalLink,
   X,
 } from 'lucide-vue-next';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { getEvidence } from '../api/reports';
+import type { EvidenceItemDto } from '../types/api';
 
-defineProps<{
+const props = defineProps<{
   isOpen: boolean;
   targetTitle: string;
-  evidenceCount: number;
+  target: { clusterId?: string; proposalId?: string } | null;
+  workspace: { taskId: string; itemId: string; reportId: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -18,71 +22,47 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
+const reviews = ref<EvidenceItemDto[]>([]);
+const totalCount = ref(0);
+const loading = ref(false);
+const loadError = ref<string | null>(null);
 const ratingFilter = ref<number | null>(null);
 
-interface MockReview {
-  id: string;
-  rating: number;
-  date: string;
-  author: string;
-  country: string;
-  title: string;
-  content: string;
-  translated: string;
-  defectTag: string;
+const filteredReviews = computed(() => {
+  if (ratingFilter.value === null) return reviews.value;
+  return reviews.value.filter(r => r.rating === ratingFilter.value);
+});
+
+async function loadEvidence() {
+  if (!props.workspace || !props.target) return;
+  loading.value = true;
+  loadError.value = null;
+  try {
+    const page = await getEvidence(props.workspace.taskId, props.workspace.itemId, {
+      reportId: props.workspace.reportId,
+      clusterId: props.target.clusterId,
+      proposalId: props.target.proposalId,
+      limit: 50,
+    });
+    reviews.value = page.items;
+    totalCount.value = page.total;
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    loading.value = false;
+  }
 }
 
-const mockReviews: MockReview[] = [
-  {
-    id: 'R1-AMZ-8821',
-    rating: 1,
-    date: '2026-08-14',
-    author: 'Michael B.',
-    country: 'US',
-    title: 'Snapped clean off on the 18th day',
-    content: 'I was simply adjusting the armrest height while sitting down, and heard a loud plastic cracking sound. The inner gear teeth sheared completely off.',
-    translated: '我只是坐着调节扶手高度，就听到很大的塑料断裂声。内部的齿轮咬合齿完全被剪切断了。',
-    defectTag: 'PA6-GF 齿条应力撕裂',
+watch(
+  () => [props.isOpen, props.target],
+  ([open]) => {
+    if (open) {
+      reviews.value = [];
+      ratingFilter.value = null;
+      void loadEvidence();
+    }
   },
-  {
-    id: 'R1-AMZ-9932',
-    rating: 1,
-    date: '2026-08-20',
-    author: 'Sarah Jenkins',
-    country: 'US',
-    title: 'Box arrived in shredded state',
-    content: 'FedEx delivery guy dropped the box and the corner split wide open. The heavy metal mechanism crushed through the cardboard.',
-    translated: 'FedEx 快递员把箱子放下时边角直接爆裂了。重型金属底盘刺穿了瓦楞纸板，把扶手刮花了。',
-    defectTag: '单坑纸箱角部跌落击穿',
-  },
-  {
-    id: 'R2-AMZ-6611',
-    rating: 2,
-    date: '2026-08-25',
-    author: 'David Schmidt',
-    country: 'DE',
-    title: 'Lumbar support has zero locking friction',
-    content: 'Die Lordosenstütze rutscht ständig nach unten. Jedes Mal wenn man sich anlehnt, verliert die Rastung den Halt.',
-    translated: '腰靠不断自发下滑。每次靠上去，卡位阻尼就会完全失效。',
-    defectTag: '滑槽阻尼公差偏大',
-  },
-  {
-    id: 'R3-AMZ-3320',
-    rating: 1,
-    date: '2026-09-01',
-    author: 'Kenji T.',
-    country: 'JP',
-    title: 'Ruined my wood flooring',
-    content: 'フローリングに黒い擦り伤がたくさんつきました。キャスターの素材が硬すぎてゴムのカスが出ます。',
-    translated: '木质地板上被蹭出了很多黑色划痕。脚轮的材质太硬，在地面摩擦会掉出黑色细屑。',
-    defectTag: 'PU包胶轮碳黑析出',
-  },
-];
-
-const filteredReviews = computed(() => {
-  if (ratingFilter.value === null) return mockReviews;
-  return mockReviews.filter(r => r.rating === ratingFilter.value);
-});
+);
 </script>
 
 <template>
@@ -129,55 +109,74 @@ const filteredReviews = computed(() => {
           {{ t('drawer.all') }}
         </button>
         <button
-          @click="ratingFilter = 1"
+          v-for="star in [1, 2, 3]"
+          :key="star"
+          @click="ratingFilter = star"
           :class="[
             'px-2 py-0.5 rounded text-[11px] transition-colors',
-            ratingFilter === 1 ? 'bg-[rgba(255,255,255,0.1)] text-[#f7f8f8]' : 'text-[#8a8f98] hover:text-[#f7f8f8]'
+            ratingFilter === star ? 'bg-[rgba(255,255,255,0.1)] text-[#f7f8f8]' : 'text-[#8a8f98] hover:text-[#f7f8f8]'
           ]"
         >
-          {{ t('drawer.star1') }}
-        </button>
-        <button
-          @click="ratingFilter = 2"
-          :class="[
-            'px-2 py-0.5 rounded text-[11px] transition-colors',
-            ratingFilter === 2 ? 'bg-[rgba(255,255,255,0.1)] text-[#f7f8f8]' : 'text-[#8a8f98] hover:text-[#f7f8f8]'
-          ]"
-        >
-          {{ t('drawer.star2') }}
+          ★{{ star }}
         </button>
       </div>
     </div>
 
-    <!-- Review List -->
+    <!-- Review List (real backend evidence) -->
     <div class="flex-1 overflow-y-auto py-4 space-y-3 pr-1 scrollbar-thin">
+      <div v-if="loading" class="text-xs text-[#8a8f98] font-mono py-8 text-center">
+        {{ t('drawer.loading') }}
+      </div>
+      <div v-else-if="loadError" class="text-xs text-rose-400 font-mono py-8 text-center">
+        {{ loadError }}
+      </div>
+      <div
+        v-else-if="filteredReviews.length === 0"
+        class="text-xs text-[#5e626e] font-mono py-8 text-center"
+      >
+        {{ t('drawer.empty') }}
+      </div>
+
       <div
         v-for="rev in filteredReviews"
-        :key="rev.id"
+        :key="rev.review_id"
         class="p-3.5 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.05)] space-y-2 text-xs"
       >
         <div class="flex items-center justify-between text-[11px] font-mono text-[#8a8f98]">
           <div class="flex items-center gap-1.5">
-            <span class="text-amber-400 font-medium">★ {{ rev.rating }}</span>
-            <span>· {{ rev.author }} ({{ rev.country }})</span>
+            <span class="text-amber-400 font-medium">★ {{ rev.rating ?? '–' }}</span>
+            <span class="text-[#5e626e]">· {{ (rev.language ?? 'und').toUpperCase() }}</span>
           </div>
           <div class="flex items-center gap-1 text-[#5e626e]">
             <Calendar class="w-3 h-3" />
-            <span>{{ rev.date }}</span>
+            <span>{{ rev.reviewed_at ?? '—' }}</span>
           </div>
         </div>
 
-        <div class="text-[#f7f8f8] font-medium">{{ rev.title }}</div>
-        <p class="text-[#8a8f98] leading-relaxed italic text-[11px]">"{{ rev.content }}"</p>
-        <p class="text-zinc-300 text-[11px] pt-1 border-t border-[rgba(255,255,255,0.04)]">
-          ↳ {{ rev.translated }}
+        <p class="text-[#f7f8f8] leading-relaxed italic text-[11px]">"{{ rev.text }}"</p>
+        <p v-if="rev.translation" class="text-zinc-300 text-[11px] pt-1 border-t border-[rgba(255,255,255,0.04)]">
+          ↳ {{ rev.translation }}
         </p>
+
+        <div class="flex items-center justify-between text-[10px] font-mono text-[#5e626e]">
+          <span class="truncate">{{ rev.source_review_id }}</span>
+          <a
+            v-if="rev.source_url"
+            :href="rev.source_url"
+            target="_blank"
+            rel="noreferrer"
+            class="flex items-center gap-1 text-[#7170ff] hover:text-[#828fff]"
+          >
+            <span>source</span>
+            <ExternalLink class="w-3 h-3" />
+          </a>
+        </div>
       </div>
     </div>
 
     <!-- Footer -->
     <div class="pt-3 border-t border-[rgba(255,255,255,0.06)] flex items-center justify-between text-[11px] text-[#5e626e] font-mono">
-      <span>{{ t('drawer.verifiedReview') }}</span>
+      <span>{{ t('drawer.totalCount', { count: totalCount }) }}</span>
       <button
         @click="emit('close')"
         class="ln-btn px-3 py-1 text-xs"
